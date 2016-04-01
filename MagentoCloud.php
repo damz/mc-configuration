@@ -98,7 +98,6 @@ class MagentoCloud
         $this->log("Copying read/write directories to temp directory.");
 
         foreach ($this->magentoReadWriteDirs as $dir) {
-          $this->execute(sprintf('mkdir -p ./init/%s', $dir));
             $this->execute(sprintf('mkdir -p ./init/%s', $dir));
             $this->execute(sprintf('/bin/bash -c "shopt -s dotglob; cp -R %s/* ./init/%s/"', $dir, $dir));
             $this->execute(sprintf('rm -rf %s', $dir));
