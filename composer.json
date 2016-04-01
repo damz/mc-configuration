@@ -1,6 +1,6 @@
 {
   "name": "platformsh-redbull/mc-configuration",
-  "description": "Provides configuration to deploy a Magento 2 project on MagentoCloud",
+  "description": "Provides defautl configuration to build and deploy Magento 2 Enterprise Edition",
   "license": "MIT",
   "version": "1.0.0",
   "require": {

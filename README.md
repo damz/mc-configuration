@@ -1,3 +1,3 @@
-# Magento 2 configuration for MagentoCloud
+# Magento 2 configuration
 
-Provides configuration to deploy a Magento 2 project on MagentoCloud
+Provides default configuration to build and deploy Magento 2 Enterprise Edition.
