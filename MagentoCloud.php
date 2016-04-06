@@ -16,7 +16,7 @@ class MagentoCloud
 
     protected $debugMode = false;
 
-    protected $magentoReadWriteDirs = ['var', 'app/etc', 'pub'];
+    protected $magentoReadWriteDirs = ['var/di', 'var/generation', 'app/etc'];
 
     protected $urls = ['unsecure' => [], 'secure' => []];
 
@@ -42,9 +42,6 @@ class MagentoCloud
     protected $solrPath;
     protected $solrPort;
     protected $solrScheme;
-
-    protected $lastOutput = array();
-    protected $lastStatus = null;
 
     protected $isMasterBranch = null;
     protected $desiredApplicationMode;
@@ -91,9 +88,9 @@ class MagentoCloud
     {
         $this->log("Start build.");
 
-        $this->applyPatches();
-
         $this->clearTemp();
+
+        $this->compile();
 
         $this->log("Copying read/write directories to temp directory.");
 
@@ -103,6 +100,16 @@ class MagentoCloud
             $this->execute(sprintf('rm -rf %s', $dir));
             $this->execute(sprintf('mkdir %s', $dir));
         }
+    }
+
+    /**
+    * Compile the generated files.
+    */
+    public function compile()
+    {
+       $this->log("Compiling generated files.");
+
+       $this->execute("php bin/magento setup:di:compile-multi-tenant");
     }
 
     /**
@@ -328,12 +335,6 @@ class MagentoCloud
      */
     protected function clearCache()
     {
-        $this->log("Clearing cache.");
-
-        $this->log("Clearing generated code.");
-
-        $this->execute('rm -rf var/generation/*');
-
         $this->log("Clearing application cache.");
 
         $this->execute(
@@ -401,19 +402,22 @@ class MagentoCloud
             $this->log('Command:'.$command);
         }
 
-        $this->lastOutput = array();
-        $this->lastStatus = null;
-
         exec(
             $command,
-            $this->lastOutput,
-            $this->lastStatus
+            $output,
+            $status
         );
 
         if ($this->debugMode) {
-            $this->log('Status:'.var_export($this->lastStatus, true));
-            $this->log('Output:'.var_export($this->lastOutput, true));
+            $this->log('Status:'.var_export($status, true));
+            $this->log('Output:'.var_export($output, true));
         }
+
+        if ($status != 0) {
+            throw new \RuntimeException("Command $command returned code $status", $status);
+        }
+
+        return $output;
     }
 
 
@@ -491,7 +495,7 @@ class MagentoCloud
     protected function executeDbQuery($query)
     {
         $password = strlen($this->dbPassword) ? sprintf('-p%s', $this->dbPassword) : '';
-        $this->execute("mysql -u $this->dbUser -h $this->dbHost -e \"$query\" $password $this->dbName");
+        return $this->execute("mysql -u $this->dbUser -h $this->dbHost -e \"$query\" $password $this->dbName");
     }
 
     /**
@@ -502,19 +506,14 @@ class MagentoCloud
 
         $desiredApplicationMode = ($this->desiredApplicationMode) ? $this->desiredApplicationMode : self::MAGENTO_PRODUCTION_MODE;
 
-        $this->log("Set Magento application to '$desiredApplicationMode' mode");
-        $this->log("Removing existing static content.");
-        $this->execute('rm -rf var/view_preprocessed/*');
-        $this->execute('rm -rf pub/static/*');
-        $this->log("Removing existing compilation files.");
-        $this->execute('rm -rf var/di/');
         $this->log("Changing application mode.");
-        $this->execute("cd bin/; /usr/bin/php ./magento deploy:mode:set $desiredApplicationMode");
+        $this->execute("cd bin/; /usr/bin/php ./magento deploy:mode:set $desiredApplicationMode --skip-compilation");
+
         if ($desiredApplicationMode == self::MAGENTO_DEVELOPER_MODE) {
             $locales = '';
-            $this->executeDbQuery("select value from core_config_data where path='general/locale/code';");
-            if (is_array($this->lastOutput) && count($this->lastOutput) > 1) {
-                $locales = $this->lastOutput;
+            $output = $this->executeDbQuery("select value from core_config_data where path='general/locale/code';");
+            if (is_array($output) && count($output) > 1) {
+                $locales = $output;
                 array_shift($locales);
                 $locales = implode(' ', $locales);
             }
@@ -522,14 +521,5 @@ class MagentoCloud
             $this->log($logMessage);
             $this->execute("cd bin/; /usr/bin/php ./magento setup:static-content:deploy $locales");
         }
-    }
-
-    /**
-     * Apply any existing patches
-     */
-    protected function applyPatches()
-    {
-        $this->log("Patching Magento.");
-        $this->execute('/usr/bin/php ./vendor/vrann/magento20-patches/patch.php');
     }
 }
