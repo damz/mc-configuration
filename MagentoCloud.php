@@ -1,4 +1,8 @@
 <?php
+/**
+ * Copyright © 2016 Magento. All rights reserved.
+ * See COPYING.txt for license details.
+ */
 
 namespace Magento\MagentoCloud;
 
@@ -45,6 +49,7 @@ class MagentoCloud
 
     protected $isMasterBranch = null;
     protected $desiredApplicationMode;
+    protected $staticFilesClearenceStrategy = false;
 
     /**
      * Parse MagentoCloud routes to more readable format.
@@ -88,9 +93,11 @@ class MagentoCloud
     {
         $this->log("Start build.");
 
-        $this->clearTemp();
+        $this->applyPatches();
 
-        $this->compile();
+        $this->compileDI();
+
+        $this->clearTemp();
 
         $this->log("Copying read/write directories to temp directory.");
 
@@ -100,16 +107,6 @@ class MagentoCloud
             $this->execute(sprintf('rm -rf %s', $dir));
             $this->execute(sprintf('mkdir %s', $dir));
         }
-    }
-
-    /**
-    * Compile the generated files.
-    */
-    public function compile()
-    {
-       $this->log("Compiling generated files.");
-
-       $this->execute("php bin/magento setup:di:compile-multi-tenant");
     }
 
     /**
@@ -128,7 +125,15 @@ class MagentoCloud
             $this->log(sprintf('Copied directory: %s', $dir));
         }
 
-        if (!file_exists('app/etc/env.php')) {
+        $configFile = 'app/etc/env.php';
+        $isUpdate = false;
+        if (file_exists($configFile)) {
+            $data = include $configFile;
+            if (isset($configFile['install']) && isset($configFile['install']['date'])) {
+                $isUpdate = true;
+            }
+        }
+        if (!$isUpdate) {
             $this->installMagento();
         } else {
             $this->updateMagento();
@@ -326,7 +331,7 @@ class MagentoCloud
         $this->log("Running setup upgrade.");
 
         $this->execute(
-            "cd bin/; /usr/bin/php ./magento setup:upgrade"
+            "cd bin/; /usr/bin/php ./magento setup:upgrade --keep-generated "
         );
     }
 
@@ -474,7 +479,6 @@ class MagentoCloud
     /**
      * Executes database query
      *
-     * @param string $query
      * $query must completed, finished with semicolon (;)
      * If branch isn't master - disable Google Analytics
      */
@@ -498,6 +502,15 @@ class MagentoCloud
         return $this->execute("mysql -u $this->dbUser -h $this->dbHost -e \"$query\" $password $this->dbName");
     }
 
+    protected function compileDI()
+    {
+        $this->log("Run DI compilation");
+        $this->execute('rm -rf var/generation/*');
+        $this->execute('rm -rf var/di/*');
+        $this->execute("cd bin/; /usr/bin/php ./magento module:enable --all");
+        $this->execute("cd bin/; /usr/bin/php ./magento setup:di:compile");
+    }
+
     /**
      * Based on variable APPLICATION_MODE. Production mode by default
      */
@@ -506,20 +519,59 @@ class MagentoCloud
 
         $desiredApplicationMode = ($this->desiredApplicationMode) ? $this->desiredApplicationMode : self::MAGENTO_PRODUCTION_MODE;
 
-        $this->log("Changing application mode.");
-        $this->execute("cd bin/; /usr/bin/php ./magento deploy:mode:set $desiredApplicationMode --skip-compilation");
+        $this->log("Set Magento application to '$desiredApplicationMode' mode");
 
-        if ($desiredApplicationMode == self::MAGENTO_DEVELOPER_MODE) {
-            $locales = '';
-            $output = $this->executeDbQuery("select value from core_config_data where path='general/locale/code';");
-            if (is_array($output) && count($output) > 1) {
-                $locales = $output;
-                array_shift($locales);
-                $locales = implode(' ', $locales);
-            }
-            $logMessage = $locales ? "Generating static content for locales $locales." : "Generating static content.";
-            $this->log($logMessage);
-            $this->execute("cd bin/; /usr/bin/php ./magento setup:static-content:deploy $locales");
+        if ($this->staticFilesClearenceStrategy) {
+            $this->log("Removing existing static content.");
+            $this->execute('rm -rf var/view_preprocessed/*');
+            $this->execute('rm -rf pub/static/*');
         }
+
+        $this->log("Changing application mode.");
+        $this->log("Enabling Maintenance mode.");
+
+        /* Enable maintenance mode */
+        $this->execute("cd bin/; /usr/bin/php ./magento maintenance:enable");
+
+        /* Generate static assets */
+        $this->log("Extract locales");
+        $locales = '';
+        $this->executeDbQuery("select value from core_config_data where path='general/locale/code';");
+        $locales = '';
+        $output = $this->executeDbQuery("select value from core_config_data where path='general/locale/code';");
+        if (is_array($output) && count($output) > 1) {
+            $locales = $output;
+            array_shift($locales);
+            $locales = implode(' ', $locales);
+        }
+        $logMessage = $locales ? "Generating static content for locales $locales." : "Generating static content.";
+        $this->log($logMessage);
+        $this->execute("cd bin/; /usr/bin/php ./magento setup:static-content:deploy $locales");
+
+        /* Enable application mode */
+        if ($desiredApplicationMode == self::MAGENTO_PRODUCTION_MODE) {
+            $this->log("Enable production mode");
+            $configFileName = "app/etc/env.php";
+            $config = include $configFileName;
+            $config['MAGE_MODE'] = 'production';
+            $updatedConfig = '<?php'  . "\n" . 'return ' . var_export($config, true) . ';';
+            file_put_contents($configFileName, $updatedConfig);
+        } else if ($desiredApplicationMode == self::MAGENTO_DEVELOPER_MODE) {
+            $this->log("Enable developer mode");
+            $this->execute("cd bin/; /usr/bin/php ./magento deploy:mode:set $desiredApplicationMode");
+        }
+
+        /* Disable maintenance mode */
+        $this->execute("cd bin/; /usr/bin/php ./magento maintenance:disable");
+        $this->log("Maintenance mode is disabled.");
+    }
+
+    /**
+     * Apply any existing patches
+     */
+    protected function applyPatches()
+    {
+        $this->log("Patching Magento.");
+        $this->execute('/usr/bin/php ./vendor/vrann/magento20-patches/patch.php');
     }
 }
