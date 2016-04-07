@@ -20,7 +20,7 @@ class MagentoCloud
 
     protected $debugMode = false;
 
-    protected $magentoReadWriteDirs = ['var/di', 'var/generation'];
+    protected $magentoReadWriteDirs = ['var/di', 'var/generation', 'app/etc'];
 
     protected $urls = ['unsecure' => [], 'secure' => []];
 
@@ -99,6 +99,8 @@ class MagentoCloud
         $this->compileDI();
         $this->clearTemp();
         $this->log("Copying read/write directories to temp directory.");
+        $this->execute('rm -rf app/etc/env.php');
+        $this->execute('rm -rf app/etc/config.php');
 
         foreach ($this->magentoReadWriteDirs as $dir) {
             $this->execute(sprintf('mkdir -p ./init/%s', $dir));
