@@ -585,6 +585,6 @@ class MagentoCloud
     protected function applyPatches()
     {
         $this->log("Patching Magento.");
-        $this->execute('/usr/bin/php ./vendor/vrann/magento20-patches/patch.php');
+        $this->execute('/usr/bin/php ./vendor/platformsh-redbull/mc-configuration/patch.php');
     }
 }
