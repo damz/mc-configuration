@@ -20,7 +20,7 @@ class MagentoCloud
 
     protected $debugMode = false;
 
-    protected $magentoReadWriteDirs = ['var/di', 'var/generation', 'app/etc'];
+    protected $magentoReadWriteDirs = ['var/di', 'var/generation'];
 
     protected $urls = ['unsecure' => [], 'secure' => []];
 
@@ -49,7 +49,8 @@ class MagentoCloud
 
     protected $isMasterBranch = null;
     protected $desiredApplicationMode;
-    protected $staticFilesClearenceStrategy = false;
+    protected $isRecompileDI = false;
+    protected $staticFilesCleaningStrategy = false;
 
     /**
      * Parse MagentoCloud routes to more readable format.
@@ -96,9 +97,7 @@ class MagentoCloud
         $this->applyPatches();
 
         $this->compileDI();
-
         $this->clearTemp();
-
         $this->log("Copying read/write directories to temp directory.");
 
         foreach ($this->magentoReadWriteDirs as $dir) {
@@ -125,21 +124,32 @@ class MagentoCloud
             $this->log(sprintf('Copied directory: %s', $dir));
         }
 
-        $configFile = 'app/etc/env.php';
-        $isUpdate = false;
-        if (file_exists($configFile)) {
-            $data = include $configFile;
-            if (isset($configFile['install']) && isset($configFile['install']['date'])) {
-                $isUpdate = true;
-            }
-        }
-        if (!$isUpdate) {
+        if (!$this->isInstalled()) {
             $this->installMagento();
         } else {
             $this->updateMagento();
         }
         $this->processMagentoMode();
         $this->disableGoogleAnalytics();
+    }
+
+    /**
+     * Verifies is Magento installed based on install date in env.php
+     *
+     * @return bool
+     */
+    private function isInstalled()
+    {
+        $configFile = 'app/etc/env.php';
+        $installed = false;
+        if (file_exists($configFile)) {
+            $data = include $configFile;
+            if (isset($data['install']) && isset($data['install']['date'])) {
+                $this->log("Magento was installed on " . $data['install']['date']);
+                $installed = true;
+            }
+        }
+        return $installed;
     }
 
     /**
@@ -165,6 +175,9 @@ class MagentoCloud
         $this->adminEmail = isset($var["ADMIN_EMAIL"]) ? $var["ADMIN_EMAIL"] : "john@example.com";
         $this->adminPassword = isset($var["ADMIN_PASSWORD"]) ? $var["ADMIN_PASSWORD"] : "admin12";
         $this->adminUrl = isset($var["ADMIN_URL"]) ? $var["ADMIN_URL"] : "admin";
+
+        $this->staticFilesCleaningStrategy = isset($var["CLEAN_STATIC_FILES"]) && $var["CLEAN_STATIC_FILES"] == 'enabled' ? true : false;
+        $this->isRecompileDI = isset($var["RECOMPILE_DI"]) && $var["RECOMPILE_DI"] == 'enabled' ? true : false;
 
         $this->desiredApplicationMode = isset($var["APPLICATION_MODE"]) ? $var["APPLICATION_MODE"] : false;
         $this->desiredApplicationMode =
@@ -217,7 +230,7 @@ class MagentoCloud
      */
     protected function installMagento()
     {
-        $this->log("File env.php does not exist. Installing Magento.");
+        $this->log("File env.php does not contain installation date. Installing Magento.");
 
         $urlUnsecure = $this->urls['unsecure'][''];
         $urlSecure = $this->urls['secure'][''];
@@ -254,7 +267,7 @@ class MagentoCloud
      */
     protected function updateMagento()
     {
-        $this->log("File env.php exists. Updating configuration.");
+        $this->log("File env.php contains installation date. Updating configuration.");
 
         $this->updateConfiguration();
 
@@ -331,7 +344,7 @@ class MagentoCloud
         $this->log("Running setup upgrade.");
 
         $this->execute(
-            "cd bin/; /usr/bin/php ./magento setup:upgrade --keep-generated "
+            "cd bin/; /usr/bin/php ./magento setup:upgrade --keep-generated"
         );
     }
 
@@ -516,40 +529,12 @@ class MagentoCloud
      */
     protected function processMagentoMode()
     {
-
         $desiredApplicationMode = ($this->desiredApplicationMode) ? $this->desiredApplicationMode : self::MAGENTO_PRODUCTION_MODE;
-
         $this->log("Set Magento application to '$desiredApplicationMode' mode");
-
-        if ($this->staticFilesClearenceStrategy) {
-            $this->log("Removing existing static content.");
-            $this->execute('rm -rf var/view_preprocessed/*');
-            $this->execute('rm -rf pub/static/*');
-        }
-
-        $this->log("Changing application mode.");
-        $this->log("Enabling Maintenance mode.");
-
-        /* Enable maintenance mode */
-        $this->execute("cd bin/; /usr/bin/php ./magento maintenance:enable");
-
-        /* Generate static assets */
-        $this->log("Extract locales");
-        $locales = '';
-        $this->executeDbQuery("select value from core_config_data where path='general/locale/code';");
-        $locales = '';
-        $output = $this->executeDbQuery("select value from core_config_data where path='general/locale/code';");
-        if (is_array($output) && count($output) > 1) {
-            $locales = $output;
-            array_shift($locales);
-            $locales = implode(' ', $locales);
-        }
-        $logMessage = $locales ? "Generating static content for locales $locales." : "Generating static content.";
-        $this->log($logMessage);
-        $this->execute("cd bin/; /usr/bin/php ./magento setup:static-content:deploy $locales");
 
         /* Enable application mode */
         if ($desiredApplicationMode == self::MAGENTO_PRODUCTION_MODE) {
+            $this->generateStaticFiles();
             $this->log("Enable production mode");
             $configFileName = "app/etc/env.php";
             $config = include $configFileName;
@@ -560,7 +545,33 @@ class MagentoCloud
             $this->log("Enable developer mode");
             $this->execute("cd bin/; /usr/bin/php ./magento deploy:mode:set $desiredApplicationMode");
         }
+    }
 
+    protected function generateStaticFiles()
+    {
+        $this->log("Enabling Maintenance mode.");
+        /* Enable maintenance mode */
+        $this->execute("cd bin/; /usr/bin/php ./magento maintenance:enable");
+
+        /* If static content is not cleaned, it will be incrementally updated */
+        if ($this->staticFilesCleaningStrategy) {
+            $this->log("Removing existing static content.");
+            $this->execute('rm -rf var/view_preprocessed/*');
+            $this->execute('rm -rf pub/static/*');
+        }
+
+        /* Generate static assets */
+        $this->log("Extract locales");
+        $locales = '';
+        $output = $this->executeDbQuery("select value from core_config_data where path='general/locale/code';");
+        if (is_array($output) && count($output) > 1) {
+            $locales = $output;
+            array_shift($locales);
+            $locales = implode(' ', $locales);
+        }
+        $logMessage = $locales ? "Generating static content for locales $locales." : "Generating static content.";
+        $this->log($logMessage);
+        $this->execute("cd bin/; /usr/bin/php ./magento setup:static-content:deploy $locales");
         /* Disable maintenance mode */
         $this->execute("cd bin/; /usr/bin/php ./magento maintenance:disable");
         $this->log("Maintenance mode is disabled.");
