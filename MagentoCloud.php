@@ -20,7 +20,7 @@ class MagentoCloud
 
     protected $debugMode = false;
 
-    protected $magentoReadWriteDirs = ['var/di', 'var/generation', 'app/etc'];
+    protected $magentoReadWriteDirs = ['var/di', 'var/generation', 'app/etc', 'pub/media'];
 
     protected $urls = ['unsecure' => [], 'secure' => []];
 
