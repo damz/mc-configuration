@@ -1,6 +1,6 @@
 <?php
 
-$dirName = __DIR__ . '/root-patches';
+$dirName = __DIR__ . '/patches';
 $dir = new DirectoryIterator($dirName);
 foreach ($dir as $fileinfo) {
     if (!$fileinfo->isDot()) {
