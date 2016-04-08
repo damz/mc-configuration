@@ -20,7 +20,7 @@ class MagentoCloud
 
     protected $debugMode = false;
 
-    protected $magentoReadWriteDirs = ['var/di', 'var/generation', 'app/etc'];
+    protected $magentoReadWriteDirs = ['var/di', 'var/generation', 'app/etc', 'pub/media'];
 
     protected $urls = ['unsecure' => [], 'secure' => []];
 
@@ -585,6 +585,6 @@ class MagentoCloud
     protected function applyPatches()
     {
         $this->log("Patching Magento.");
-        $this->execute('/usr/bin/php ./vendor/vrann/magento20-patches/patch.php');
+        $this->execute('/usr/bin/php ./vendor/platformsh-redbull/mc-configuration/patch.php');
     }
 }
