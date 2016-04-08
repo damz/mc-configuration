@@ -1,7 +1,7 @@
 diff --git a/vendor/magento/module-catalog/Setup/InstallData.php b/vendor/magento/module-catalog/Setup/InstallData.php
 index bff2d66..0289fee 100644
---- a/Setup/InstallData.php
-+++ b/Setup/InstallData.php
+--- a/vendor/magento/module-catalog/Setup/InstallData.php
++++ b/vendor/magento/module-catalog/Setup/InstallData.php
 @@ -23,6 +23,20 @@ class InstallData implements InstallDataInterface
      private $categorySetupFactory;
  
