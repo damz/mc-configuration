@@ -517,13 +517,59 @@ class MagentoCloud
         return $this->execute("mysql -u $this->dbUser -h $this->dbHost -e \"$query\" $password $this->dbName");
     }
 
+    protected function generateDIHash()
+    {
+        # Generate a hash of all the `.xml` and `.php` files in the current directory.
+        $output = $this->execute(implode(" | ", [
+            # Find all the files in *.xml or *.php.
+            'find -type f \( -name "*.xml" -or -name "*.php" \)',
+            # Remove the autoloader files, as they are timing dependent, and otherwise
+            # derivative of the php files anyway.
+            'egrep -v \'^./vendor/autoload.php|./vendor/composer/autoload.*\.php$\'',
+            # Sort the list.
+            'sort',
+            # Generate a hash of all the files.
+            'xargs sha1sum',
+            # Generate a hash of the list.
+            'sha1sum',
+        ]));
+        return explode(" ", $output[0], 2)[0];
+    }
+
+    protected function getCacheFileFilename()
+    {
+        if (isset($_ENV["COMPOSER_CACHE_DIR"])) {
+            return $_ENV["COMPOSER_CACHE_DIR"] . "/magento-dic/" . $this->generateDIHash() . ".tar.gz";
+        }
+    }
+
+    protected function pruneCacheFiles()
+    {
+        if (isset($_ENV["COMPOSER_CACHE_DIR"])) {
+            # Remove cache files that are older than 15 days.
+            # We should use the atime here, but the paths are mounted as `noatime` so the atime
+            # is not currently updated.
+            $this->execute("find " . escapeshellarg($_ENV["COMPOSER_CACHE_DIR"]) . " -mtime +15 -exec rm {} \;");
+        }
+    }
+
     protected function compileDI()
     {
-        $this->log("Run DI compilation");
-        $this->execute('rm -rf var/generation/*');
-        $this->execute('rm -rf var/di/*');
-        $this->execute("cd bin/; /usr/bin/php ./magento module:enable --all");
-        $this->execute("cd bin/; /usr/bin/php ./magento setup:di:compile");
+        $cache_file = $this->getCacheFileFilename();
+        if (isset($cache_file) && file_exists($cache_file)) {
+            $this->log("Using pre-compiled DI");
+            $this->execute("tar xfz " . escapeshellarg($cache_file));
+        } else {
+            $this->log("Running DI compilation");
+            $this->execute('rm -rf var/generation/*');
+            $this->execute('rm -rf var/di/*');
+            $this->execute("cd bin/; /usr/bin/php ./magento module:enable --all");
+            $this->execute("cd bin/; /usr/bin/php ./magento setup:di:compile");
+            if (isset($cache_file)) {
+                @mkdir(dirname($cache_file), 0777, true);
+                $this->execute("tar cfz " . escapeshellarg($cache_file) . " var/generation var/di");
+            }
+        }
     }
 
     /**
